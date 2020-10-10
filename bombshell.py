@@ -25,16 +25,6 @@ def changeDirectory(args):
 def runInBackground(command, args): pass #TODO: Implement run program in background
 
 
-def redirectOutput():
-	global outList
-	try:
-		if not outList: return
-		outList = [os.open(file, os.O_CREAT | os.O_WRONLY | os.O_TRUNC) for file in outList] # Store open file descriptors
-		for line in sys.stdin: map(lambda fd: os.write(fd, line.encode()), outList)
-		for fd in outList: os.close(fd)
-	except OSError as err: print(err)
-
-
 def pipeItUp():
 	pfds = os.pipe() # Create file descriptors for pipe io
 	for fd in pfds: os.set_inheritable(fd, True)
