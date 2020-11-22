@@ -1,28 +1,23 @@
 #! python3.8
 import os, sys, re
 
-BOMBA = chr(0x1F4A3) # Bomb character constant
+BOMBA = chr(0x1F4A3) # Bomb unicode character constant
 inList, outList = [], [] # Used to store names and descriptors of redirect input and output files
 std_fds = None # Used to store copied std file descriptors when using pipe
 
 
 def restoreStdFds():
 	if not std_fds: return
-	for i in range(3): # reopen std file descriptors
-		os.dup2(std_fds[i], i)
-		os.set_inheritable(i, True)
+	for i in range(3): os.dup2(std_fds[i], i, True) # reopen std file descriptors
 
 
 def changeDirectory(args):
 	if len(args) < 2: args.append(os.environ['HOME'])
 	else: args[1] = re.sub('^~', os.environ['HOME'], args[1]) # Replace tilde with home alias
 	try: os.chdir(args[1])
-	except FileNotFoundError: print(f'asdfacd: no such file or directory: {args[1]}')
+	except FileNotFoundError: print(f'cd: no such file or directory: {args[1]}')
 	except PermissionError: print('User does not have permission to access this directory.')
 	except NotADirectoryError: print('Path is not a directory.')
-
-
-def runInBackground(command, args): pass #TODO: Implement run program in background
 
 
 def pipeItUp():
@@ -32,15 +27,19 @@ def pipeItUp():
 
 
 def promptCommand():
-	promptStr = re.sub(f"^{os.environ['HOME']}", '~', f'{os.getcwd()} {BOMBA} ')
-	os.write(1, promptStr.encode()) # Print current working directory and prompt symbol
+	if os.getenv('PS1'): os.write(1, os.environ['PS1'].encode())
+	else:
+		promptStr = re.sub(f"^{os.environ['HOME']}", '~', f'{os.getcwd()} {BOMBA} ')
+		os.write(1, promptStr.encode()) # Print current working directory and prompt symbol
 	try:
-		inputStr = sys.stdin.readline()
-		if not inputStr: sys.exit()
+		sys.stdout.flush()
+		inputStr = ''
+		inputStr = input()
+	except EOFError: sys.exit()
 	except KeyboardInterrupt:
 		print()
 		sys.exit()
-	return inputStr.strip()
+	return inputStr
 
 
 def parseCommand(commStr: str):
@@ -49,7 +48,7 @@ def parseCommand(commStr: str):
                     re.findall('< *[^ ]+', commStr))) # Parse and store redirected inputs
 	outList = list(map(lambda s: re.sub('> *', '', s.strip()),
                     re.findall('> *[^ ]+', commStr))) # Parse and store redirected outputs
-	args = re.split('[ ]+', re.sub('(> *[^ ]+)|(< *[^ ]+)', '', commStr).strip()) # Parse program arguments
+	args = re.sub('(> *[^ ]+)|(< *[^ ]+)', '', commStr).strip().split() # Parse program arguments
 	if not len(args): return
 	return args
 
@@ -57,29 +56,29 @@ def parseCommand(commStr: str):
 BUILT_INS = {'cd': changeDirectory, 'exit': sys.exit}
 
 
-def runCommand(args: [str], pipe: tuple=None):
+def runCommand(args: [str], pipe: tuple=None, runBg=False):
 	if args[0] in BUILT_INS: # Run built in commands
 		BUILT_INS[args[0]](args if args[0] != 'exit' else None)
 		return
 
-	rc = os.fork()
-	if rc == 0: # Child branch
+	pid = os.fork()
+	if pid == 0: # Child fork
 		try:
-			if inList: os.dup2(os.open(inList[-1], os.O_RDONLY), 0) # Redirect input
 			if pipe: # Route output through pipe
 				os.dup2(pipe[1], 1) # Assign pipe's file descriptor to stdout's
-				os.set_inheritable(1, True)
 				for fd in pipe: os.close(fd)
+			if inList: os.dup2(os.open(inList[-1], os.O_RDONLY), 0) # Redirect input
 			if outList: os.dup2(os.open(outList[-1], os.O_CREAT | os.O_WRONLY | os.O_TRUNC), 1) # Redirect output
 			os.execvp(args[0], args) # Execute program
 		except FileNotFoundError: print(f'bombshell: {args[0]}: Command not found')
-		sys.exit()
-	elif rc > 0: # Parent branch
-		os.wait()
+		sys.exit(1)
+	elif pid > 0: # Parent fork
+		if not runBg:
+			try: os.wait() # Wait for child fork to finish before resuming execution
+			except KeyboardInterrupt: os.abort()
 		global std_fds
 		if pipe:
-			os.dup2(pipe[0], 0) # Close stdin, duplicate pipe read fd into stdin fd
-			os.set_inheritable(0, True)
+			os.dup2(pipe[0], 0, True) # Close stdin, duplicate pipe read fd into stdin fd
 			for fd in pipe: os.close(fd) # Close parent pipe file descriptors
 		elif std_fds:
 			restoreStdFds() # Reopen closed std file descriptors
@@ -91,17 +90,16 @@ def runCommand(args: [str], pipe: tuple=None):
 if __name__ == "__main__":
 	while True:
 		inputStr = promptCommand()
-		# print(f'{inputStr=}')
-		if not inputStr: continue
-		pipeStream = re.split('[|]', inputStr) # Parse command pipes
+		pipeStream = inputStr.split('|') # Parse command pipes
 		if len(pipeStream) > 1: std_fds = os.dup(0), os.dup(1), os.dup(2)  # Duplicate std file descriptors; will be reopened when pipe ends
-		# print(f'{pipeStream=}')
-		if len(pipeStream) <= 0: continue
 
 		while pipeStream:
-			args = parseCommand(pipeStream.pop(0))
+			command = pipeStream.pop(0)
+			bg = ' &' in command # Run in background flag
+			command = re.sub(' &', '', command)
+			args = parseCommand(command)
 			pfds = pipeItUp() if len(pipeStream) >= 1 else None # Create pipe file descriptors
-			try: runCommand(args, pipe=pfds)
+			try: runCommand(args, pfds, bg)
 			except OSError as err:
 				os.write(2, f'{err}\n'.encode())
 				sys.exit(1)
