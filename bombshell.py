@@ -26,16 +26,24 @@ def pipeItUp():
 	return pfds
 
 
-def promptCommand():
+def prompt():
 	if os.getenv('PS1'): os.write(1, os.environ['PS1'].encode())
 	else:
 		promptStr = re.sub(f"^{os.environ['HOME']}", '~', f'{os.getcwd()} {BOMBA} ')
 		os.write(1, promptStr.encode()) # Print current working directory and prompt symbol
 	try:
-		sys.stdout.flush()
-		inputStr = ''
-		inputStr = input()
-	except EOFError: sys.exit()
+		sys.stdin.flush()
+		blocks = []
+		while buffer := sys.stdin.readline():
+			print(f'{buffer=}')
+			if buffer[-1] == '\n':
+				blocks.append(buffer[:-1])
+				break
+			else: blocks.append(buffer)
+		inputStr = ''.join(blocks)
+	except EOFError as err:
+		print(err)
+		sys.exit()
 	except KeyboardInterrupt:
 		print()
 		sys.exit()
@@ -56,7 +64,7 @@ def parseCommand(commStr: str):
 BUILT_INS = {'cd': changeDirectory, 'exit': sys.exit}
 
 
-def runCommand(args: [str], pipe: tuple=None, runBg=False):
+def runCommand(args: list, pipe: tuple=None, runBg: bool=False):
 	if args[0] in BUILT_INS: # Run built in commands
 		BUILT_INS[args[0]](args if args[0] != 'exit' else None)
 		return
@@ -89,7 +97,7 @@ def runCommand(args: [str], pipe: tuple=None, runBg=False):
 
 if __name__ == "__main__":
 	while True:
-		inputStr = promptCommand()
+		inputStr = prompt()
 		pipeStream = inputStr.split('|') # Parse command pipes
 		if len(pipeStream) > 1: std_fds = os.dup(0), os.dup(1), os.dup(2)  # Duplicate std file descriptors; will be reopened when pipe ends
 
