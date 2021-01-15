@@ -1,4 +1,4 @@
-#! python3.8
+#! /usr/bin/env python3
 import os, sys, re
 
 BOMBA = chr(0x1F4A3) # Bomb unicode character constant
@@ -31,16 +31,7 @@ def prompt():
 	else:
 		promptStr = re.sub(f"^{os.environ['HOME']}", '~', f'{os.getcwd()} {BOMBA} ')
 		os.write(1, promptStr.encode()) # Print current working directory and prompt symbol
-	try:
-		sys.stdin.flush()
-		blocks = []
-		while buffer := sys.stdin.readline():
-			print(f'{buffer=}')
-			if buffer[-1] == '\n':
-				blocks.append(buffer[:-1])
-				break
-			else: blocks.append(buffer)
-		inputStr = ''.join(blocks)
+	try: inputStr = sys.stdin.readline()
 	except EOFError as err:
 		print(err)
 		sys.exit()
@@ -98,6 +89,7 @@ def runCommand(args: list, pipe: tuple=None, runBg: bool=False):
 if __name__ == "__main__":
 	while True:
 		inputStr = prompt()
+		if not inputStr: continue
 		pipeStream = inputStr.split('|') # Parse command pipes
 		if len(pipeStream) > 1: std_fds = os.dup(0), os.dup(1), os.dup(2)  # Duplicate std file descriptors; will be reopened when pipe ends
 
